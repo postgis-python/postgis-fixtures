@@ -51,9 +51,22 @@ jobs:
   # container, so testcontainers (and Docker-in-Docker) is never involved.
   live:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every currently-supported PostgreSQL major, spanning PostGIS 3.3-3.6.
+        # The generated DDL and the assertion helpers have to hold across all of
+        # them, not just the version they were written against (16-3.4).
+        postgis-image:
+          - postgis/postgis:14-3.3
+          - postgis/postgis:15-3.4
+          - postgis/postgis:16-3.4
+          - postgis/postgis:17-3.5
+          - postgis/postgis:18-3.6
+    name: live (${{ matrix.postgis-image }})
     services:
       postgis:
-        image: postgis/postgis:16-3.4
+        image: ${{ matrix.postgis-image }}
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: postgis_fixtures_ci
