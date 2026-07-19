@@ -50,7 +50,7 @@ seed produces byte-identical WKT and you can hard-code expected values. The
 distribution is deliberately clustered around urban centres with a uniform
 background scatter, so index behaviour in tests resembles index behaviour in
 production. And the whole generation, DDL and assertion layer runs offline —
-this repository's own 286 tests need no Docker, no network and no PostgreSQL.
+this repository's own 287 tests need no Docker, no network and no PostgreSQL.
 
 ## Install
 
@@ -235,10 +235,10 @@ With no database configured, the examples skip rather than error:
 
 ```console
 $ PYTHONPATH=. pytest examples -q -rs
-ssssssssss                                                               [100%]
+sssssssssssss                                                            [100%]
 =========================== short test summary info ============================
-SKIPPED [10] examples/test_geofence_queries.py: no PostGIS available: No PostGIS database available. Either set POSTGIS_FIXTURES_DSN (or the postgis_dsn ini option) to a running PostGIS instance, or install testcontainers so an ephemeral container can be started.
-10 skipped in 0.00s
+SKIPPED [13] examples/test_geofence_queries.py: no PostGIS available: No PostGIS database available. Either set POSTGIS_FIXTURES_DSN (or the postgis_dsn ini option) to a running PostGIS instance, or install testcontainers so an ephemeral container can be started.
+13 skipped in 0.00s
 ```
 
 Point it at a real database and they run:
@@ -246,6 +246,34 @@ Point it at a real database and they run:
 ```bash
 POSTGIS_FIXTURES_DSN=postgresql://gis:gis@localhost:5432/gis PYTHONPATH=. pytest examples
 ```
+
+Or let testcontainers start one, naming the image you want:
+
+```bash
+PYTHONPATH=. pytest examples --postgis-image=postgis/postgis:16-3.4
+```
+
+#### On Docker Desktop, disable the Ryuk reaper
+
+testcontainers starts a companion container,
+[Ryuk](https://github.com/testcontainers/moby-ryuk), to garbage-collect anything
+left behind. Ryuk bind-mounts the Docker socket, and Docker Desktop — on macOS,
+Windows and any Linux install using the Desktop VM rather than plain Docker
+Engine — does not share that socket path with containers by default. The
+container fails to start with `mounts denied: the path
+/socket_mnt/.../docker.sock is not shared from the host`, and every test that
+needs a database skips.
+
+Turn the reaper off:
+
+```bash
+TESTCONTAINERS_RYUK_DISABLED=true PYTHONPATH=. pytest examples --postgis-image=postgis/postgis:16-3.4
+```
+
+The trade-off is that containers are then reaped by testcontainers' own session
+teardown rather than by a watchdog, so a hard kill (`SIGKILL`, a crashed CI
+runner) can leave one running; `docker ps` and `docker rm -f` clean up. Plain
+Docker Engine on Linux needs none of this.
 
 ## How it works
 
@@ -355,7 +383,7 @@ env:
 ```console
 $ .venv/bin/pip install -r requirements-dev.txt
 $ .venv/bin/python -m pytest
-286 passed in 1.50s
+287 passed in 1.50s
 ```
 
 The suite needs no Docker, no network and no PostgreSQL. The generation, DDL,
@@ -384,8 +412,8 @@ postgis_fixtures/geometry.py       163      0   100%
 postgis_fixtures/plugin.py         114      0   100%
 postgis_fixtures/provider.py        92      0   100%
 --------------------------------------------------------------
-TOTAL                             1039      5    99%
-286 passed in 1.60s
+TOTAL                             1042      5    99%
+287 passed in 1.60s
 ```
 
 ## Further reading

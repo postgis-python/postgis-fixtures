@@ -196,13 +196,23 @@ def postgis_provider(request: pytest.FixtureRequest) -> Iterator[ProviderSession
     The provider is started exactly once. ``--postgis-keep`` suppresses teardown
     and prints the (password-redacted) DSN so you can attach ``psql`` to the
     database a failing test left behind.
+
+    "No database available" degrades to a skip wherever it is discovered. That
+    includes :meth:`Provider.start` and not merely provider selection: a machine
+    can have testcontainers installed — so selection happily picks a container —
+    and still have no usable container runtime. Letting that surface as an error
+    would fail every test in a suite that is merely unrunnable here, which is the
+    outcome this fixture exists to avoid.
     """
     try:
         choice = resolve_choice(request.config)
     except ProviderError as exc:
         pytest.skip(str(exc))
     provider = PROVIDER_FACTORY(choice)
-    dsn = provider.start()
+    try:
+        dsn = provider.start()
+    except ProviderError as exc:
+        pytest.skip(str(exc))
     keep = request.config.getoption("--postgis-keep")
     try:
         yield ProviderSession(provider=provider, dsn=dsn)

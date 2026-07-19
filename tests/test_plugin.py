@@ -342,6 +342,49 @@ class TestProviderUnavailable:
         result.assert_outcomes(skipped=1)
         result.stdout.fnmatch_lines(["*POSTGIS_FIXTURES_DSN*"])
 
+    def test_a_provider_that_cannot_start_skips_rather_than_errors(
+        self, pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A broken container runtime must skip, not error out every test.
+
+        Provider *selection* succeeds whenever testcontainers is importable, so
+        a machine with the library installed but no working Docker only finds
+        out at ``start()`` time. That has to degrade the same way a missing
+        dependency does.
+        """
+        monkeypatch.delenv("POSTGIS_FIXTURES_DSN", raising=False)
+        pytester.makeconftest(
+            """
+            import postgis_fixtures.plugin as plugin
+            from postgis_fixtures.errors import ProviderError
+
+            pytest_plugins = ["postgis_fixtures.plugin"]
+
+            class UnstartableProvider:
+                description = "unstartable provider"
+
+                def __init__(self, choice):
+                    pass
+
+                def start(self):
+                    raise ProviderError(
+                        "Failed to start the postgis/postgis:16-3.4 container: no runtime. "
+                        "Check that a container runtime is running and the image can be pulled."
+                    )
+
+                def stop(self):
+                    pass
+
+            def pytest_configure(config):
+                plugin.testcontainers_available = lambda: True
+                plugin.PROVIDER_FACTORY = UnstartableProvider
+            """
+        )
+        pytester.makepyfile("def test_needs_db(postgis_dsn): pass")
+        result = pytester.runpytest("-rs")
+        result.assert_outcomes(skipped=1, errors=0, failed=0)
+        result.stdout.fnmatch_lines(["*container runtime is running*"])
+
 
 class TestReadinessProbe:
     def test_probe_opens_a_connection_and_asks_for_the_postgis_version(
