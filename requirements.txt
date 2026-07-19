@@ -1,0 +1,9 @@
+# Runtime dependencies. Install into a virtualenv; this repo is cloned, not packaged.
+pytest>=8
+shapely>=2.0
+pyproj>=3.6
+psycopg[binary]>=3.1
+
+# Optional, and genuinely optional — the plugin degrades gracefully without them:
+#   SQLAlchemy>=2.0                 enables the `postgis_engine` fixture
+#   testcontainers[postgres]>=4.0   enables ephemeral PostGIS containers
