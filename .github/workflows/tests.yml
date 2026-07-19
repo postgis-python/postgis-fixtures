@@ -1,0 +1,126 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The plugin's own suite: no database, no Docker, no network. It must stay
+  # that way, so this job deliberately has no service container.
+  offline:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run the offline suite
+        run: pytest --cov=postgis_fixtures --cov-report=term-missing
+
+      - name: Show the datasets and DDL the CLI reports
+        run: |
+          set -euo pipefail
+          python -m postgis_fixtures list
+          python -m postgis_fixtures ddl --dataset cities > /dev/null
+
+  # The example suite against a real PostGIS. This is the path unit tests cannot
+  # reach: container/DSN resolution, the COPY loader, and assert_uses_index all
+  # need a live server. POSTGIS_FIXTURES_DSN points the plugin at the service
+  # container, so testcontainers (and Docker-in-Docker) is never involved.
+  live:
+    runs-on: ubuntu-latest
+    services:
+      postgis:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgis_fixtures_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgis_fixtures_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      POSTGIS_FIXTURES_DSN: postgresql://postgres:postgres@localhost:5432/postgis_fixtures_ci
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      # pg_isready reports the bootstrap server before the real restart, so the
+      # health check alone is not proof the database is accepting connections.
+      - name: Wait for PostGIS to accept connections
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 30); do
+            if python -c "
+          import os, sys
+          import psycopg
+          try:
+              with psycopg.connect(os.environ['POSTGIS_FIXTURES_DSN'], connect_timeout=3) as conn:
+                  conn.execute('SELECT 1')
+          except Exception:
+              sys.exit(1)
+          "; then
+              echo "accepting connections after ${attempt}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::PostGIS never accepted connections"
+          exit 1
+
+      # A skipped example suite is not evidence of anything, so this asserts the
+      # tests actually ran. Without it a misconfigured DSN would look like a pass.
+      - name: Run the example suite against live PostGIS
+        run: |
+          set -euo pipefail
+          PYTHONPATH=. pytest examples -p no:cacheprovider -v \
+            --junitxml=examples-results.xml
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          suite = ET.parse("examples-results.xml").getroot()
+          if suite.tag == "testsuites":
+              suite = suite[0]
+          total = int(suite.get("tests", 0))
+          skipped = int(suite.get("skipped", 0))
+          print(f"{total} tests, {skipped} skipped")
+          if total == 0 or skipped:
+              raise SystemExit(
+                  "::error::the example suite must run against the service "
+                  f"container, but {skipped} of {total} tests were skipped"
+              )
+          PY
